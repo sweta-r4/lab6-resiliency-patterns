@@ -189,3 +189,210 @@ Conclusion
 Part 2 of this lab successfully demonstrated how circuit breaker and retry patterns work in practice. The circuit breaker effectively prevented cascading failures by opening after three consecutive failures and blocking subsequent requests. The retry mechanism with exponential backoff significantly improved success rates for the slow endpoint, recovering 90% of requests that would have otherwise failed.
 The monitoring data and visualizations provided clear evidence of how these patterns behave under different conditions. The circuit state chart showed exactly when the circuit opened and closed, while the success/failure chart compared reliability across endpoints.
 These patterns are not just academic concepts they are essential tools for building robust cloud systems that can handle failures gracefully. By implementing them myself, I gained a deep understanding of how they work and when to apply them.
+
+
+->> Part 3: Designing for Graceful Degradation
+
+In this part of the lab, I enhanced my application to implement graceful degradation strategies that maintain core functionality even when parts of the system fail. The goal is to ensure that critical features remain available while less important features are gracefully disabled or fall back to alternatives during failures or high load conditions.
+I built upon my existing AWS Lambda API from Part 2, adding three tiers of functionality with different resiliency requirements, fallback mechanisms, feature flags, and a load shedding system. This document explains my implementation approach, testing methodology, and analyzes the results.
+
+Phase 1: Enhance Your Application with Three Tiers of Functionality
+Understanding the Tiered Approach
+Before diving into code, I planned out my three tiers of functionality for an e-commerce style application:
+
+
+<img width="1057" height="567" alt="image" src="https://github.com/user-attachments/assets/0a999b81-a7f1-4459-896f-daae3dc959ab" />
+
+Implementation Approach
+I created a new Lambda function called graceful-degradation-demo that handles all three tiers of functionality. The function examines the incoming request path and routes to the appropriate handler:
+•	/product/{id} → Tier 1: Product details
+•	/product/{id}/reviews → Tier 2: User reviews
+•	/product/{id}/recommendations → Tier 3: Personalized recommendations
+•	/health → Health check endpoint
+•	/admin → Admin functions for testing
+
+Key Features Implemented
+Simulated Database: I created in-memory dictionaries to simulate product data, reviews, and cache storage. In a real production environment, these would be DynamoDB tables, RDS databases, or ElastiCache clusters.
+Feature Flags: I implemented feature flags that can be toggled via environment variables or the admin endpoint. These control whether reviews and recommendations are enabled.
+Maintenance Mode: A global switch that takes the entire system offline with a friendly 503 message.
+Load Shedding Configuration: I built a load shedding system that progressively disables less critical tiers as load increases:
+•	Tier 3 (recommendations) shed when load > 60%
+•	Tier 2 (reviews) shed when load > 85%
+•	Tier 1 (product info) always stays on
+________________________________________
+Phase 2: Implementing Fallback Mechanisms
+Tier 2 Fallback Strategy
+For the reviews endpoint (Tier 2), I implemented a multi-layer fallback strategy:
+1.	Primary Path: Try to fetch live reviews from the database
+2.	First Fallback: If live data fails, check the cache for previously fetched reviews
+3.	Second Fallback: If cache is empty, serve static sample reviews with a notice
+4.	Load Shedding: If system is under high load, reviews are disabled entirely
+
+Tier 3 Fallback Strategy
+For recommendations (Tier 3), I implemented a simpler strategy:
+1.	Check Load Shedding: If load is high, recommendations are disabled
+2.	Check Feature Flag: If recommendations are disabled by flag, return empty list
+3.	Normal Operation: Generate recommendations (simulated with delay)
+4.	Graceful Disable: When disabled, return empty recommendations with explanatory notice
+
+	Hands-On 
+
+•	Create a New Lambda Function
+
+<img width="975" height="493" alt="image" src="https://github.com/user-attachments/assets/345c712f-2b16-40d2-a102-d20706b380be" />
+
+<img width="975" height="493" alt="image" src="https://github.com/user-attachments/assets/2740fcfc-3413-4c4c-bfbf-7610a57ba708" />
+
+
+•	Set Up API Gateway
+<img width="975" height="500" alt="image" src="https://github.com/user-attachments/assets/47a443d5-a5da-45da-bab0-4c3afb8825d8" />
+
+•	Create GET Methods for Each Resource:
+<img width="975" height="494" alt="image" src="https://github.com/user-attachments/assets/fb9d314e-b14c-47f8-921a-ca76ed1d7b6b" />
+
+•	Deploy the API:
+
+<img width="975" height="499" alt="image" src="https://github.com/user-attachments/assets/dc428706-6de3-4ab2-9d0f-00da1205caf2" />
+
+•	Test Your API Manually
+
+<img width="975" height="138" alt="image" src="https://github.com/user-attachments/assets/bb068c7c-7d99-4f91-9064-226c89d55c26" />
+
+<img width="975" height="109" alt="image" src="https://github.com/user-attachments/assets/39182f54-2511-4099-9311-b98908664377" />
+
+<img width="975" height="109" alt="image" src="https://github.com/user-attachments/assets/abab4d38-b3bb-44f9-95c0-9c1b48829403" />
+
+<img width="975" height="126" alt="image" src="https://github.com/user-attachments/assets/ae933801-1882-4b8a-95d3-054dbae7f695" />
+
+Phase 4: Test Scenarios and Results
+Test Scenario 1: Normal Operation
+Goal: Verify all three tiers work correctly under normal conditions.
+Procedure:
+•	Made 5 sets of requests to random product IDs
+•	Each set called all three endpoints
+
+<img width="975" height="601" alt="image" src="https://github.com/user-attachments/assets/b4528b2c-e051-4a9b-8a5e-a2be67da5e8d" />
+
+<img width="715" height="815" alt="image" src="https://github.com/user-attachments/assets/98461b34-07ea-4208-ad3e-386ac7faa59c" />
+
+Analysis: Under normal conditions, all three tiers performed as expected. Tier 3 had slightly higher latency (0.5-2.0s) due to simulated processing time, which is acceptable for non-critical features.
+
+Test Scenario 2: Dependency Failure
+Goal: Test how the system behaves when the reviews service becomes unavailable.
+Procedure:
+•	Made 10 consecutive calls to the reviews endpoint
+•	Lambda function configured to simulate failure 30% of the time
+
+<img width="696" height="927" alt="image" src="https://github.com/user-attachments/assets/ab7b3832-04ec-4f25-a647-1cc9f127e05c" />
+
+<img width="719" height="1196" alt="image" src="https://github.com/user-attachments/assets/75ddbf72-eaea-4176-a456-b3bd9fa8c44e" />
+
+Summary:
+•	Total calls: 10
+•	Successful (live data): 6 (60%)
+•	Fallback used: 4 (40%)
+o	Static fallback: 3
+o	Cache fallback: 1
+•	Zero failures: All requests returned 200 with either live or fallback data
+Analysis: The fallback mechanism worked perfectly. Even when the reviews service failed (simulated 30% failure rate), users always saw either cached reviews or sample content. This is a great example of graceful degradation - the feature wasn't completely broken, just degraded.
+
+Test Scenario 3: Load Shedding
+Goal: Demonstrate progressive degradation as load increases.
+Procedure:
+•	Stage 1: Normal load (30%) - all tiers active
+•	Stage 2: Medium load (70%) - Tier 3 should be shed
+•	Stage 3: High load (90%) - Tiers 2 and 3 should be shed
+•	Stage 4: Recovery (30%) - all tiers restored
+
+<img width="619" height="939" alt="image" src="https://github.com/user-attachments/assets/d1ae34d8-6197-4b0c-a242-35d5f53afa5e" />
+
+<img width="588" height="946" alt="image" src="https://github.com/user-attachments/assets/533c571d-9f35-45b7-8b8e-0007b9d92cd8" />
+
+<img width="739" height="981" alt="image" src="https://github.com/user-attachments/assets/e81054e9-2b6f-4e1b-9e07-8422aa86c31e" />
+
+
+Summary:
+•	Tier 1 (Critical): 100% success rate throughout all load levels
+•	Tier 2 (Important): Active at 30% and 70% load, shed at 90%
+•	Tier 3 (Nice-to-have): Active at 30% load, shed at 70% and 90%
+Analysis: The load shedding system worked exactly as designed. As load increased, less critical features were progressively disabled. Critical product information remained available throughout. This demonstrates how a system can stay functional during traffic spikes by prioritizing core functionality.
+
+Test Scenario 4: Maintenance Mode
+Goal: Test the global maintenance mode switch.
+Procedure:
+•	Enable maintenance mode
+•	Attempt to access API
+•	Disable maintenance mode
+•	Verify API works again
+
+<img width="715" height="976" alt="image" src="https://github.com/user-attachments/assets/363c6edc-4b8e-4e9d-9a95-8564fed4f4b4" />
+
+Analysis: Maintenance mode successfully took the entire system offline with a friendly 503 message. This is useful for planned maintenance where you want to inform users rather than showing connection errors.
+
+Test Scenario 5: Feature Flags
+Goal: Test the ability to disable specific tiers via feature flags.
+Procedure:
+•	Disable reviews feature
+•	Call reviews endpoint
+•	Disable recommendations feature
+•	Call recommendations endpoint
+•	Re-enable both
+
+<img width="609" height="996" alt="image" src="https://github.com/user-attachments/assets/d6ee859a-26c2-4ed5-8a35-fd58edef4451" />
+
+
+Analysis: Feature flags provide fine-grained control over individual features. This is useful for:
+•	Gradually rolling out new features
+•	Quickly disabling problematic features without redeployment
+•	A/B testing
+•	Regional feature availability
+
+
+Analysis of Effectiveness
+What Worked Well
+1. Tiered Approach
+The three-tier architecture proved highly effective. By categorizing functionality by criticality, I could make intelligent decisions about what to protect and what to sacrifice during failures. This mirrors real-world e-commerce sites where product information is sacred but recommendations are optional.
+2. Fallback Mechanisms
+The multi-layer fallback for reviews (live → cache → static) ensured users always saw something. Even when the reviews service was completely down, they saw sample reviews rather than an error message. This maintains user trust and keeps them on the site.
+3. Progressive Load Shedding
+The load shedding system demonstrated exactly the behavior I wanted: as pressure increased, non-critical features were shed first. Critical product information remained available even at 90% simulated load. This would keep an e-commerce site functional during Black Friday traffic spikes.
+4. Feature Flags
+Having the ability to disable individual features without redeployment is powerful. If a bug was discovered in the recommendations engine, I could disable it instantly while keeping everything else running.
+5. Maintenance Mode
+The global maintenance switch provides a clean way to take the system offline for updates. Users see a friendly message rather than mysterious errors.
+Challenges and Limitations
+1. Simulated vs. Real Metrics
+In my implementation, load levels are manually set via the admin endpoint. In a real system, load shedding would be automatic based on actual metrics like CPU utilization, request queue depth, or memory usage.
+2. Cache Invalidation
+My simple cache never expires. In production, you'd need cache invalidation strategies (TTL, write-through, etc.) to ensure data freshness.
+3. No Persistence
+The feature flags reset when the Lambda function cold starts. In production, these would be stored in a database or configuration service.
+4. Single Region
+My implementation is in a single region. Real-world systems would need multi-region deployment for zone/region failures.
+
+Real-World Applications
+The patterns I implemented are used everywhere in production:
+•	Amazon.com progressively sheds recommendations during peak traffic
+•	Netflix shows cached content when personalization service is down
+•	Twitter displays "Tweets aren't loading right now" with retry options
+•	Banking apps show account balances but may hide transaction history during outages
+________________________________________
+Lessons Learned
+1. Graceful Degradation Requires Intentional Design
+You can't add graceful degradation after building a system - it must be designed from the start. The tiered approach forced me to think about what really matters to users.
+2. Fallbacks Should Be Simple and Reliable
+The best fallbacks are simple - static content, cached data, or default values. Complex fallbacks can become failure points themselves.
+3. Monitoring is Essential
+Without monitoring (like my health endpoint and logging), you wouldn't know when features are degraded. Users would just think the site is broken.
+4. Testing Failure Scenarios is Crucial
+My test scenarios revealed issues I hadn't considered. For example, I initially forgot to implement cache expiration, which would serve stale data indefinitely.
+________________________________________
+Conclusion
+Part 3 of this lab successfully demonstrated how graceful degradation strategies can keep a system functional even when parts fail. The three-tier architecture, fallback mechanisms, feature flags, and load shedding worked together to ensure critical functionality (product information) remained available under all test scenarios.
+The most important takeaway is that 100% availability of all features is impossible, but 100% availability of core functionality is achievable with proper design. Users will forgive missing recommendations or slightly stale reviews, but they won't forgive being unable to see product prices or complete a purchase.
+These patterns are directly applicable to real-world cloud systems. The skills I learned - designing for failure, implementing fallbacks, progressive degradation, and feature flags - are essential for building robust, user-friendly applications that survive the inevitable failures of distributed systems.
+
+
+
+
+
